@@ -12,7 +12,7 @@ import os
 
 import redis
 
-from db import get_url, insert_url
+from db import get_url, insert_url,get_count,increment_url
 from utils import get_hostname, is_valid_url
 
 from jinja2 import Environment
@@ -36,9 +36,12 @@ class Shortly(object):
         )
         self.jinja_env.filters["hostname"] = get_hostname
 
-        self.url_map = Map(
+        self.url_map = Map( # ROUTING
             [
                 Rule("/", endpoint="home"),
+                Rule("/new_url", endpoint="new_url"),
+                Rule('/<short_id>/details',endpoint='short_link_details'),
+                Rule('/<short_id>',endpoint='follow_short_link')
                 # TODO: Добавить ендпоинты на:
                 # - создание шортката
                 # - редирект по ссылке
@@ -51,6 +54,7 @@ class Shortly(object):
         return Response(t.render(context), mimetype="text/html")
 
     def dispatch_request(self, request):
+
         adapter = self.url_map.bind_to_environ(request.environ)
         try:
             endpoint, values = adapter.match()
@@ -69,8 +73,19 @@ class Shortly(object):
         return self.render_template("homepage.html")
 
     def on_new_url(self, request):
+
         error = None
-        url = ""
+        url = ''
+
+        if(request.method == 'POST'):
+            url = request.form['url']
+
+            if(is_valid_url(url) == False):
+                error = 'Not valid url'
+            else:           
+                id = insert_url(self.redis,url)
+                return redirect('%s'%id.decode('utf-8'))
+
         # TODO: Проверить что метод для создания новой ссылки "POST"
         # Проверить валидность ссылки используя is_valid_url
         # Если ссылка верна - создать запись в базе и
@@ -80,18 +95,32 @@ class Shortly(object):
         return self.render_template("new_url.html", error=error, url=url)
 
     def on_follow_short_link(self, request, short_id):
+
+        url = get_url(self.redis,short_id)
+        if(not url):
+            return NotFound()
+        
+        increment_url(self.redis,short_id)
+        
         # TODO: Достать из базы запись о ссылке по ее ид (get_url)
         # если такого ид в базе нет то кинуть 404 (NotFount())
         # заинкрементить переход по ссылке (increment_url)
-        link_target = "/"
-        return redirect(link_target)
+
+        link_target = url
+        return redirect('%s/details'%short_id)
 
     def on_short_link_details(self, request, short_id):
         # TODO: Достать из базы запись о ссылке по ее ид (get_url)
         # если такого ид в базе нет то кинуть 404 (NotFount())
-        link_target = "/"
+        url = get_url(self.redis,short_id)
 
-        click_count = 0  # достать из базы кол-во кликов по ссылке (get_count)
+        if(not url):
+            return NotFound()
+
+        link_target = url
+
+        click_count = get_count(self.redis,short_id)  # достать из базы кол-во кликов по ссылке (get_count)
+        
         return self.render_template(
             "short_link_details.html",
             link_target=link_target,
