@@ -12,7 +12,7 @@ import os
 
 import redis
 
-from db import get_url, insert_url,get_count,increment_url
+from db import get_url, insert_url,get_count,increment_url,get_list_urls
 from utils import get_hostname, is_valid_url
 
 from jinja2 import Environment
@@ -30,7 +30,9 @@ from werkzeug.wrappers import Response
 class Shortly(object):
     def __init__(self, config):
         self.redis = redis.Redis(config["redis_host"], config["redis_port"])
+
         template_path = os.path.join(os.path.dirname(__file__), "templates")
+
         self.jinja_env = Environment(
             loader=FileSystemLoader(template_path), autoescape=True
         )
@@ -41,13 +43,15 @@ class Shortly(object):
                 Rule("/", endpoint="home"),
                 Rule("/new_url", endpoint="new_url"),
                 Rule('/<short_id>/details',endpoint='short_link_details'),
-                Rule('/<short_id>',endpoint='follow_short_link')
-                # TODO: Добавить ендпоинты на:
-                # - создание шортката
-                # - редирект по ссылке
-                # - детальную информацию о ссылке
+                Rule('/<short_id>',endpoint='follow_short_link'),
+                Rule('/list',endpoint='list_url'),
+                Rule('/logout',endpoint='logout')
             ]
         )
+
+    def on_logout(self, request):
+        """logout user"""
+        return Response("You was logout from Shortly",status=401)
 
     def render_template(self, template_name, **context):
         t = self.jinja_env.get_template(template_name)
@@ -56,6 +60,7 @@ class Shortly(object):
     def dispatch_request(self, request):
 
         adapter = self.url_map.bind_to_environ(request.environ)
+        
         try:
             endpoint, values = adapter.match()
             return getattr(self, "on_" + endpoint)(request, **values)
@@ -66,7 +71,12 @@ class Shortly(object):
 
     def wsgi_app(self, environ, start_response):
         request = Request(environ)
-        response = self.dispatch_request(request)
+        # LOGIN AND PASSWORD HERE
+        if request.authorization and request.authorization.username == 'user' and request.authorization.password == '1234':
+            response = self.dispatch_request(request)
+            
+        else:
+            response = self.auth_required(request)
         return response(environ, start_response)
 
     def on_home(self, request):
@@ -77,60 +87,59 @@ class Shortly(object):
         error = None
         url = ''
 
-        if(request.method == 'POST'):
+        if request.method == 'POST':
             url = request.form['url']
 
             if(is_valid_url(url) == False):
                 error = 'Not valid url'
             else:           
                 id = insert_url(self.redis,url)
-                return redirect('%s'%id.decode('utf-8'))
-
-        # TODO: Проверить что метод для создания новой ссылки "POST"
-        # Проверить валидность ссылки используя is_valid_url
-        # Если ссылка верна - создать запись в базе и
-        # отправить пользователя на детальную информацию
-        # Если неверна - написать ошибку
+                return redirect('%s'%id)
 
         return self.render_template("new_url.html", error=error, url=url)
+
+
+    def auth_required(self, request):
+        """asks user his username and password"""
+        return Response(
+            "Invalid password or login",
+            401,
+            {"WWW-Authenticate": 'Basic realm="login required"'},
+        )
 
     def on_follow_short_link(self, request, short_id):
 
         url = get_url(self.redis,short_id)
+
         if(not url):
             return NotFound()
         
         increment_url(self.redis,short_id)
-        
-        # TODO: Достать из базы запись о ссылке по ее ид (get_url)
-        # если такого ид в базе нет то кинуть 404 (NotFount())
-        # заинкрементить переход по ссылке (increment_url)
 
         link_target = url
-        return redirect('%s/details'%short_id)
+        return redirect(link_target)
 
     def on_short_link_details(self, request, short_id):
-        # TODO: Достать из базы запись о ссылке по ее ид (get_url)
-        # если такого ид в базе нет то кинуть 404 (NotFount())
         url = get_url(self.redis,short_id)
 
         if(not url):
             return NotFound()
 
-        link_target = url
-
-        click_count = get_count(self.redis,short_id)  # достать из базы кол-во кликов по ссылке (get_count)
+        click_count = get_count(self.redis,short_id)
         
         return self.render_template(
             "short_link_details.html",
-            link_target=link_target,
+            link_target=url,
             short_id=short_id,
             click_count=click_count,
         )
 
     def on_list_url(self, request):
-        # TODO: ДЗ
-        pass
+        """returns response with list of urls info"""
+        return self.render_template(
+            "list.html",
+            short_ids = get_list_urls(self.redis)
+        )
 
     def error_404(self):
         response = self.render_template("404.html")

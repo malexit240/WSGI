@@ -1,0 +1,16 @@
+{% extends "layout.html" %}
+{% block title %}List of urls{% endblock %}
+{% block body %}
+{%if short_ids%}
+{%for key in short_ids%}
+<div class='url-info-block'>
+<p>Short id: {{key}}</p>
+<p>Full link: {{short_ids[key][0]}}</p>
+<p>Click count: {{short_ids[key][1]}}</p>
+<p><a href="{{key}}/details">View details</a>></p>
+</div>
+{%endfor%}
+{%else%}
+<p>Not links yet</p>
+{%endif%}
+{% endblock %}
